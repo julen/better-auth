@@ -7,6 +7,10 @@ import {
 	it,
 	test,
 } from "vitest";
+
+import Database from "better-sqlite3";
+import { CamelCasePlugin, Kysely, SqliteDialect } from "kysely";
+
 import { getTestInstance } from "../../test-utils/test-instance";
 import { oidcProvider } from ".";
 import { genericOAuth } from "../generic-oauth";
@@ -16,32 +20,73 @@ import { oidcClient } from "./client";
 import { genericOAuthClient } from "../generic-oauth/client";
 import { listen, type Listener } from "listhen";
 import { toNodeHandler } from "../../integrations/node";
-import { jwt } from "../jwt";
+import { jwt } from "../jwt"
+import type { BetterAuthOptions } from "../../types";
 import { createLocalJWKSet, decodeProtectedHeader, jwtVerify } from "jose";
 
-describe("oidc", async () => {
+class BetterAuthCompatibleCamelCasePlugin extends CamelCasePlugin {
+	protected override camelCase(str: string): string {
+		if (str === "redirect_urls") {
+			return "redirectURLs";
+		}
+
+		return super.camelCase(str);
+	}
+}
+
+describe.each<[string, BetterAuthOptions["database"] | null]>([
+	["default", null],
+	[
+		"custom DB + CamelCasePlugin",
+		{
+			db: new Kysely({
+				dialect: new SqliteDialect({
+					database: new Database(":memory:"),
+				}),
+				plugins: [new CamelCasePlugin()],
+			}),
+			type: "sqlite",
+		},
+	],
+	[
+		"custom DB + CamelCasePlugin w/mapping",
+		{
+			db: new Kysely({
+				dialect: new SqliteDialect({
+					database: new Database(":memory:"),
+				}),
+				plugins: [new BetterAuthCompatibleCamelCasePlugin()],
+			}),
+			type: "sqlite",
+		},
+	],
+])("oidc %s", async (_, database) => {
 	const {
 		auth: authorizationServer,
 		signInWithTestUser,
 		customFetchImpl,
 		testUser,
-	} = await getTestInstance({
-		baseURL: "http://localhost:3000",
-		plugins: [
-			oidcProvider({
-				loginPage: "/login",
-				consentPage: "/oauth2/authorize",
-				requirePKCE: true,
-				getAdditionalUserInfoClaim(user, scopes, client) {
-					return {
-						custom: "custom value",
-						userId: user.id,
-					};
-				},
-			}),
-			jwt(),
-		],
-	});
+	} = await getTestInstance(
+		{
+			baseURL: "http://localhost:3000",
+			...(database ? { database } : {}),
+			plugins: [
+				oidcProvider({
+					loginPage: "/login",
+					consentPage: "/oauth2/authorize",
+					requirePKCE: true,
+					getAdditionalUserInfoClaim(user, scopes, client) {
+						return {
+							custom: "custom value",
+							userId: user.id,
+						};
+					},
+				}),
+				jwt(),
+			],
+		},
+		database ? { testWith: "useOptionsDb" } : {},
+	);
 	const { headers } = await signInWithTestUser();
 	const serverClient = createAuthClient({
 		plugins: [oidcClient()],

@@ -36,10 +36,11 @@ export async function getTestInstance<
 		port?: number;
 		disableTestUser?: boolean;
 		testUser?: Partial<User>;
-		testWith?: "sqlite" | "postgres" | "mongodb" | "mysql";
+		testWith?: "sqlite" | "postgres" | "mongodb" | "mysql" | "useOptionsDb";
 	},
 ) {
 	const testWith = config?.testWith || "sqlite";
+	const useCustomDb = testWith === "useOptionsDb" && options?.database;
 	/**
 	 * create db folder if not exists
 	 */
@@ -84,8 +85,9 @@ export async function getTestInstance<
 			},
 		},
 		secret: "better-auth.secret",
-		database:
-			testWith === "postgres"
+		database: useCustomDb
+			? options.database
+			: testWith === "postgres"
 				? { db: postgres, type: "postgres" }
 				: testWith === "mongodb"
 					? mongodbAdapter(await mongodbClient())
@@ -168,7 +170,9 @@ export async function getTestInstance<
 			return;
 		}
 
-		await fs.unlink(dbName);
+		if (!useCustomDb) {
+			await fs.unlink(dbName);
+		}
 	};
 	cleanupSet.add(cleanup);
 
